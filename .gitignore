@@ -1,0 +1,8 @@
+# Debug screenshots and UI dumps
+*.png
+*.xml
+screenshots/
+*.log
+state.txt
+retry.log
+__pycache__/
