@@ -78,6 +78,7 @@ TO_ANIMATION=15
 TO_POPUP=10
 TO_RETRY=3
 MAX_RETRIES=4
+DEBUG=0
 # ===== Logging =====
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE" >&2; }
 
@@ -99,8 +100,15 @@ back() { input keyevent 4; invalidate_dump; log "  back"; }
 home() { input keyevent 3; invalidate_dump; log "  home"; }
 
 shot() {
+    [ "$DEBUG" -eq 0 ] && return 0
     screencap -p "$SHOT_DIR/$1_$(date +%s).png" 2>/dev/null
     log "  shot: $1"
+}
+
+# Always-fire screenshot (for failures)
+shot_fail() {
+    screencap -p "$SHOT_DIR/$1_fail_$(date +%s).png" 2>/dev/null
+    log "  shot_fail: $1"
 }
 
 # ===== UI dump (native pages; webview returns empty) =====
@@ -213,6 +221,7 @@ scene_pass() {
 
 scene_fail() {
     log "  [FAIL] $SCENE_ID -> S99 ($1)"
+    shot_fail "$SCENE_ID"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $SCENE_ID: $1" >> "$RETRY_FILE"
     NEXT_STATE="S99"
     echo "S99" > "$STATE_FILE"
@@ -316,17 +325,24 @@ scene_s03() {
     SCENE_ID="S03"
     log "=== S03: 提现笔笔省 voucher claim ==="
 
-    if click_text "提现笔笔省"; then
+    if click_text_wait "提现笔笔省" "$TO_WEBVIEW"; then
         log "  clicked '提现笔笔省' via text"
     else
         log "  '提现笔笔省' not found, using coordinate fallback"
         tap_var "$C_TX_BIBISHENG"
     fi
     sleep "$TO_WEBVIEW"
-    shot "bibisheng_page"
 
-    # On the 提现笔笔省 page, find and click the claim button
+    # Check if already claimed before clicking
     invalidate_dump
+    if text_exists "已领取" || text_exists "今日已领"; then
+        log "  bibisheng already claimed today, skipping"
+        back
+        sleep "$TO_PAGE"
+        scene_pass "S04"; return 0
+    fi
+
+    # Not claimed yet, find and click the claim button
     if click_text_wait "领取" "$TO_PAGE"; then
         log "  clicked '领取' on bibisheng page"
     else
@@ -334,18 +350,17 @@ scene_s03() {
         tap_var "$C_TX_VOUCHER_CLAIM"
     fi
     sleep "$TO_PAGE"
-    shot "claim_result"
 
+    # Check result
     invalidate_dump
     if dump_ui; then
         if text_exists "已领取" || text_exists "今日已领"; then
-            log "  bibisheng already claimed today, continuing"
+            log "  bibisheng claimed successfully"
         fi
     fi
 
     back
     sleep "$TO_PAGE"
-    shot "after_bibisheng"
 
     scene_pass "S04"; return 0
 }
@@ -355,7 +370,7 @@ scene_s04() {
     SCENE_ID="S04"
     log "=== S04: enter 支付有优惠 ==="
 
-    if click_text "支付有优惠"; then
+    if click_text_wait "支付有优惠" "$TO_WEBVIEW"; then
         log "  clicked '支付有优惠' via text"
     else
         log "  '支付有优惠' not found, using coordinate fallback"
@@ -372,7 +387,7 @@ scene_s05() {
     SCENE_ID="S05"
     log "=== S05: 兑换好礼 -> 金币提现券 ==="
 
-    if click_text "兑换好礼"; then
+    if click_text_wait "兑换好礼" "$TO_WEBVIEW"; then
         log "  clicked '兑换好礼' via text"
     else
         log "  '兑换好礼' not found, using coordinate fallback"
@@ -396,35 +411,40 @@ scene_s06() {
 
     shot "voucher_list"
 
-    if click_text "100元额度"; then
+    if click_text_wait "100元额度" "$TO_WEBVIEW"; then
         log "  clicked '100元额度' voucher via text"
     else
         log "  '100元额度' not found, using coordinate fallback"
         tap_var "$C_VOUCHER_100"
     fi
     sleep "$TO_WEBVIEW"
-    shot "voucher_detail"
 
-    # FINANCIAL COMMITMENT POINT: never retry after this tap
+    # Check if already exchanged today - if so, skip entirely
     invalidate_dump
-    if click_text "1金币兑换"; then
+    if text_exists "已兑换"; then
+        log "  already exchanged today, returning"
+        back
+        sleep "$TO_PAGE"
+        scene_pass "S07"; return 0
+    fi
+
+    # Not exchanged yet, click the exchange button
+    if click_text_wait "1金币兑换" "$TO_PAGE"; then
         log "  clicked '1金币兑换' via text"
     else
         log "  '1金币兑换' not found, using coordinate"
         tap_var "$C_EXCHANGE_CLAIM"
     fi
     sleep "$TO_PAGE"
-    shot "exchange_confirm_popup"
 
     # Handle second confirmation dialog
     invalidate_dump
-    if click_text "确认兑换"; then
+    if click_text_wait "确认兑换" "$TO_PAGE"; then
         log "  clicked '确认兑换' on confirm dialog"
     else
         log "  no confirm dialog, proceeding"
     fi
     sleep "$TO_PAGE"
-    shot "exchange_result"
 
     if dump_ui; then
         if text_exists "兑换成功"; then
@@ -433,13 +453,9 @@ scene_s06() {
             log "  edge case: already exchanged today"
         elif text_exists "金币不足"; then
             log "  edge case: insufficient coins"
-        elif text_exists "网络异常" || text_exists "网络错误" || text_exists "加载失败"; then
-            log "  edge case: network error"
         else
             log "  exchange submitted"
         fi
-    else
-        log "  webview dump empty; result in screenshot"
     fi
 
     # Back from 兑换成功 -> 兑换详情 -> 平台提现福利
@@ -447,7 +463,6 @@ scene_s06() {
     sleep "$TO_PAGE"
     back
     sleep "$TO_PAGE"
-    shot "after_exchange"
 
     # Always pass forward - never fail (avoids duplicate exchange on retry)
     scene_pass "S07"; return 0
@@ -458,13 +473,9 @@ scene_s07() {
     SCENE_ID="S07"
     log "=== S07: lottery - spend coin & accept ==="
 
-    invalidate_dump
-    if dump_ui; then
-        if text_exists "已收下" || text_exists "天后可再参与"; then
-            log "  lottery in cooldown, already claimed, skipping"
-            shot "lottery_cooldown"
-            scene_pass "END"; return 0
-        fi
+    if wait_for_any "已收下" "天后可再参与" "$TO_WEBVIEW"; then
+        log "  lottery in cooldown, already claimed, skipping"
+        scene_pass "END"; return 0
     fi
 
     if click_text "花金币"; then
@@ -653,6 +664,10 @@ main() {
             check_coords
             exit 0
             ;;
+        --debug)
+            DEBUG=1
+            log "  debug mode: screenshots enabled"
+            ;;
         --reset)
             write_state "S00"
             reset_retries
@@ -660,6 +675,7 @@ main() {
             ;;
         --scene)
             # Run a single scene for testing: sh wx_sign.sh --scene S03
+            DEBUG=1
             local target="${2:-S00}"
             echo ""
             preview_coords "$target"
