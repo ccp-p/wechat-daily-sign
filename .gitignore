@@ -9,3 +9,5 @@ __pycache__/
 analyze*.py
 ocr.py
 card_crops/
+
+update.py
