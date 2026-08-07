@@ -6,3 +6,6 @@ screenshots/
 state.txt
 retry.log
 __pycache__/
+analyze*.py
+ocr.py
+card_crops/

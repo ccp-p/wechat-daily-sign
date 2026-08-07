@@ -38,7 +38,7 @@ SWIPE_MS=500
 C_PAY_SERVICE_TAB="540 2280"
 CAL_PAY_SERVICE_TAB=0
 
-# S03: bibisheng voucher claim (webview)
+# S03: 提现笔笔省 voucher claim (webview)
 C_TX_BIBISHENG="540 800"
 CAL_TX_BIBISHENG=0
 C_TX_VOUCHER_CLAIM="810 1100"
@@ -51,13 +51,13 @@ CAL_PAY_DISCOUNT=0
 # S05: exchange gift -> coin voucher (webview)
 C_EXCHANGE_GIFT="540 900"
 CAL_EXCHANGE_GIFT=0
-C_COIN_VOUCHER="540 1100"
+C_COIN_VOUCHER="277 489"
 CAL_COIN_VOUCHER=0
 
 # S06: 100 yuan voucher exchange (webview)
-C_VOUCHER_100="270 1000"
+C_VOUCHER_100="280 855"
 CAL_VOUCHER_100=0
-C_EXCHANGE_CLAIM="540 2200"
+C_EXCHANGE_CLAIM="582 2052"
 CAL_EXCHANGE_CLAIM=0
 
 # S07: spend coins lottery (webview)
@@ -110,10 +110,10 @@ invalidate_dump() { DUMP_VALID=0; }
 dump_ui() {
     if [ "$DUMP_VALID" -eq 1 ] && [ -f "$UI_DUMP" ] && [ -s "$UI_DUMP" ]; then return 0; fi
     rm -f "$UI_DUMP"
-    uiautomator dump "$UI_DUMP" 2>/dev/null
+    uiautomator dump --compressed "$UI_DUMP" 2>/dev/null
     if [ -f "$UI_DUMP" ] && [ -s "$UI_DUMP" ]; then DUMP_VALID=1; return 0; fi
     sleep 1
-    uiautomator dump "$UI_DUMP" 2>/dev/null
+    uiautomator dump --compressed "$UI_DUMP" 2>/dev/null
     if [ -f "$UI_DUMP" ] && [ -s "$UI_DUMP" ]; then DUMP_VALID=1; return 0; fi
     return 1
 }
@@ -311,19 +311,32 @@ scene_s02() {
     esac
 }
 
-# ===== Scene: S03 - "提现比比省" voucher claim (webview) =====
+# ===== Scene: S03 - "提现笔笔省" voucher claim (webview) =====
 scene_s03() {
     SCENE_ID="S03"
-    log "=== S03: bibisheng voucher claim ==="
+    log "=== S03: 提现笔笔省 voucher claim ==="
 
-    tap_var "$C_TX_BIBISHENG"
+    if click_text "提现笔笔省"; then
+        log "  clicked '提现笔笔省' via text"
+    else
+        log "  '提现笔笔省' not found, using coordinate fallback"
+        tap_var "$C_TX_BIBISHENG"
+    fi
     sleep "$TO_WEBVIEW"
     shot "bibisheng_page"
 
-    tap_var "$C_TX_VOUCHER_CLAIM"
+    # On the 提现笔笔省 page, find and click the claim button
+    invalidate_dump
+    if click_text_wait "领取" "$TO_PAGE"; then
+        log "  clicked '领取' on bibisheng page"
+    else
+        log "  '领取' not found, trying coordinate fallback"
+        tap_var "$C_TX_VOUCHER_CLAIM"
+    fi
     sleep "$TO_PAGE"
     shot "claim_result"
 
+    invalidate_dump
     if dump_ui; then
         if text_exists "已领取" || text_exists "今日已领"; then
             log "  bibisheng already claimed today, continuing"
@@ -342,12 +355,12 @@ scene_s04() {
     SCENE_ID="S04"
     log "=== S04: enter 支付有优惠 ==="
 
-    if [ -z "$C_PAY_DISCOUNT" ]; then
-        shot "s04_no_coord"
-        scene_fail "pay discount entry not found"; return 1
+    if click_text "支付有优惠"; then
+        log "  clicked '支付有优惠' via text"
+    else
+        log "  '支付有优惠' not found, using coordinate fallback"
+        tap_var "$C_PAY_DISCOUNT"
     fi
-
-    tap_var "$C_PAY_DISCOUNT"
     sleep "$TO_WEBVIEW"
     shot "pay_discount_page"
 
@@ -359,20 +372,16 @@ scene_s05() {
     SCENE_ID="S05"
     log "=== S05: 兑换好礼 -> 金币提现券 ==="
 
-    if [ -z "$C_EXCHANGE_GIFT" ]; then
-        shot "s05_no_exchange_coord"
-        scene_fail "coin voucher not found"; return 1
+    if click_text "兑换好礼"; then
+        log "  clicked '兑换好礼' via text"
+    else
+        log "  '兑换好礼' not found, using coordinate fallback"
+        tap_var "$C_EXCHANGE_GIFT"
     fi
-
-    tap_var "$C_EXCHANGE_GIFT"
     sleep "$TO_WEBVIEW"
     shot "exchange_gift_page"
 
-    if [ -z "$C_COIN_VOUCHER" ]; then
-        shot "s05_no_voucher_coord"
-        scene_fail "coin voucher not found"; return 1
-    fi
-
+    # 金币换提现券 is an image (no text), tap by coordinate
     tap_var "$C_COIN_VOUCHER"
     sleep "$TO_WEBVIEW"
     shot "coin_voucher_page"
@@ -385,24 +394,42 @@ scene_s06() {
     SCENE_ID="S06"
     log "=== S06: 100 yuan voucher exchange (financial) ==="
 
-    if [ -z "$C_VOUCHER_100" ] || [ -z "$C_EXCHANGE_CLAIM" ]; then
-        shot "s06_no_coords"
-        scene_fail "coordinates not configured"; return 1
-    fi
-
     shot "voucher_list"
 
-    tap_var "$C_VOUCHER_100"
+    if click_text "100元额度"; then
+        log "  clicked '100元额度' voucher via text"
+    else
+        log "  '100元额度' not found, using coordinate fallback"
+        tap_var "$C_VOUCHER_100"
+    fi
     sleep "$TO_WEBVIEW"
     shot "voucher_detail"
 
     # FINANCIAL COMMITMENT POINT: never retry after this tap
-    tap_var "$C_EXCHANGE_CLAIM"
+    invalidate_dump
+    if click_text "1金币兑换"; then
+        log "  clicked '1金币兑换' via text"
+    else
+        log "  '1金币兑换' not found, using coordinate"
+        tap_var "$C_EXCHANGE_CLAIM"
+    fi
+    sleep "$TO_PAGE"
+    shot "exchange_confirm_popup"
+
+    # Handle second confirmation dialog
+    invalidate_dump
+    if click_text "确认兑换"; then
+        log "  clicked '确认兑换' on confirm dialog"
+    else
+        log "  no confirm dialog, proceeding"
+    fi
     sleep "$TO_PAGE"
     shot "exchange_result"
 
     if dump_ui; then
-        if text_exists "已兑换"; then
+        if text_exists "兑换成功"; then
+            log "  exchange success"
+        elif text_exists "已兑换"; then
             log "  edge case: already exchanged today"
         elif text_exists "金币不足"; then
             log "  edge case: insufficient coins"
@@ -415,6 +442,9 @@ scene_s06() {
         log "  webview dump empty; result in screenshot"
     fi
 
+    # Back from 兑换成功 -> 兑换详情 -> 平台提现福利
+    back
+    sleep "$TO_PAGE"
     back
     sleep "$TO_PAGE"
     shot "after_exchange"
@@ -428,11 +458,31 @@ scene_s07() {
     SCENE_ID="S07"
     log "=== S07: lottery - spend coin & accept ==="
 
-    tap_var "$C_SPEND_COIN"
+    invalidate_dump
+    if dump_ui; then
+        if text_exists "已收下" || text_exists "天后可再参与"; then
+            log "  lottery in cooldown, already claimed, skipping"
+            shot "lottery_cooldown"
+            scene_pass "END"; return 0
+        fi
+    fi
+
+    if click_text "花金币"; then
+        log "  clicked '花金币' via text"
+    else
+        log "  '花金币' not found, using coordinate fallback"
+        tap_var "$C_SPEND_COIN"
+    fi
     sleep "$TO_PAGE"
     shot "spend_coin_page"
 
-    tap_var "$C_LOTTERY_ACCEPT"
+    invalidate_dump
+    if click_text "收下" 2>/dev/null || click_text "拼手气" 2>/dev/null; then
+        log "  clicked accept via text"
+    else
+        log "  accept button not found via text, using coordinate"
+        tap_var "$C_LOTTERY_ACCEPT"
+    fi
     sleep 2
     shot "lottery_started"
 
@@ -469,7 +519,13 @@ scene_s08() {
         fi
     fi
 
-    tap_var "$C_LOTTERY_CONFIRM"
+    invalidate_dump
+    if click_text "确认收下" 2>/dev/null || click_text "收下" 2>/dev/null; then
+        log "  clicked confirm via text"
+    else
+        log "  confirm not found via text, using coordinate"
+        tap_var "$C_LOTTERY_CONFIRM"
+    fi
     sleep 2
     shot "final_result"
 
