@@ -2,7 +2,7 @@
 # wx_sign.sh - WeChat daily sign-in (single file)
 # Run: sh /sdcard/wx_sign.sh           # full run from current state
 # Run: sh /sdcard/wx_sign.sh --reset    # reset state and run from S00
-# Run: sh /sdcard/wx_sign.sh --scene S05 # run single scene (for testing)
+# Run: sh /sdcard/wx_sign.sh --scene S02 # run single scene (for testing)
 # Run: sh /sdcard/wx_sign.sh --check     # show coordinate calibration checklist
 #
 # State persists in /sdcard/wx-sign/state.txt for crash recovery.
@@ -31,45 +31,42 @@ SWIPE_TOP=1800
 SWIPE_BOT=400
 SWIPE_MS=500
 
-# S00-S02: native page coords (fallback when dump click fails)
-C_SEARCH_BAR="540 152"
-CAL_SEARCH_BAR=0
-C_WXPAY_RESULT="540 400"
-CAL_WXPAY_RESULT=0
+# S01: WeChat Pay entry on chat list (native, dump-based via click_text)
+# No coords needed - finds "微信支付" text wherever it is in the list
 
-# S04: pay service tab (webview, bottom tab)
+# S02: pay service tab (webview, bottom tab)
 C_PAY_SERVICE_TAB="540 2280"
 CAL_PAY_SERVICE_TAB=0
 
-# S05: bibisheng voucher claim (webview)
+# S03: bibisheng voucher claim (webview)
 C_TX_BIBISHENG="540 800"
 CAL_TX_BIBISHENG=0
 C_TX_VOUCHER_CLAIM="810 1100"
 CAL_TX_VOUCHER_CLAIM=0
 
-# S06: pay discount entry (webview)
+# S04: pay discount entry (webview)
 C_PAY_DISCOUNT="540 1200"
 CAL_PAY_DISCOUNT=0
 
-# S07: exchange gift -> coin voucher (webview)
+# S05: exchange gift -> coin voucher (webview)
 C_EXCHANGE_GIFT="540 900"
 CAL_EXCHANGE_GIFT=0
 C_COIN_VOUCHER="540 1100"
 CAL_COIN_VOUCHER=0
 
-# S08: 100 yuan voucher exchange (webview)
+# S06: 100 yuan voucher exchange (webview)
 C_VOUCHER_100="270 1000"
 CAL_VOUCHER_100=0
 C_EXCHANGE_CLAIM="540 2200"
 CAL_EXCHANGE_CLAIM=0
 
-# S09: spend coins lottery (webview)
+# S07: spend coins lottery (webview)
 C_SPEND_COIN="810 1000"
 CAL_SPEND_COIN=0
 C_LOTTERY_ACCEPT="540 1800"
 CAL_LOTTERY_ACCEPT=0
 
-# S10: lottery confirm popup (webview)
+# S08: lottery confirm popup (webview)
 C_LOTTERY_CONFIRM="540 2000"
 CAL_LOTTERY_CONFIRM=0
 
@@ -81,7 +78,6 @@ TO_ANIMATION=15
 TO_POPUP=10
 TO_RETRY=3
 MAX_RETRIES=4
-
 # ===== Logging =====
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE" >&2; }
 
@@ -253,77 +249,52 @@ scene_s00() {
     scene_fail "wechat not launched"; return 1
 }
 
-# ===== Scene: S01 - Open search bar =====
+# ===== Scene: S01 - Click WeChat Pay in chat list =====
 scene_s01() {
     SCENE_ID="S01"
-    log "=== S01: open search bar ==="
-
-    if click_text "搜索"; then
-        log "  clicked '搜索' via text"
-    else
-        log "  '搜索' text not found, using coordinate fallback"
-        tap_var "$C_SEARCH_BAR"
-    fi
-    sleep 2
-    shot "s01_search_opened"
+    log "=== S01: click WeChat Pay in chat list ==="
 
     dump_ui
-    if grep -q "EditText" "$UI_DUMP" 2>/dev/null; then
-        shot "s01_search_input_ready"
-        scene_pass "S02"; return 0
-    fi
-
-    scene_fail "search bar not found"; return 1
-}
-
-# ===== Scene: S02 - Input "wxzf" (pinyin initials for 微信支付) =====
-scene_s02() {
-    SCENE_ID="S02"
-    log "=== S02: input search text 'wxzf' ==="
-
-    input text "wxzf"
-    sleep 2
-    shot "s02_search_input"
-
-    dump_ui
-    if grep -q "微信支付" "$UI_DUMP" 2>/dev/null || grep -q "公众号" "$UI_DUMP" 2>/dev/null || grep -q "wxzf" "$UI_DUMP" 2>/dev/null; then
-        shot "s02_search_results"
-        scene_pass "S03"; return 0
-    fi
-
-    scene_fail "no search results"; return 1
-}
-
-# ===== Scene: S03 - Enter WeChat Pay official account =====
-scene_s03() {
-    SCENE_ID="S03"
-    log "=== S03: enter WeChat Pay official account ==="
-
     if click_text "微信支付"; then
-        log "  clicked '微信支付' result via text"
+        log "  clicked '微信支付' in chat list"
     else
-        log "  '微信支付' result not found, using coordinate fallback"
-        tap_var "$C_WXPAY_RESULT"
+        log "  '微信支付' not found, scrolling to top and retrying"
+        swipe_down
+        sleep 1
+        dump_ui
+        if click_text "微信支付"; then
+            log "  clicked '微信支付' after scroll to top"
+        else
+            shot "s01_wxpay_not_found"
+            scene_fail "WeChat Pay not found in chat list"; return 1
+        fi
     fi
     sleep "$TO_PAGE"
-    shot "s03_wxpay_entered"
+    shot "s01_wxpay_entered"
 
+    # Verify we left the chat list (bottom tab bar should be gone)
+    invalidate_dump
     dump_ui
-    if [ -f "$UI_DUMP" ] && [ -s "$UI_DUMP" ]; then
-        if grep -q "EditText" "$UI_DUMP" 2>/dev/null; then
-            shot "s03_still_on_search"
-            scene_fail "wxpay not entered"; return 1
+    if text_exists "通讯录" && text_exists "发现"; then
+        log "  still on chat list, retrying click"
+        click_text "微信支付"
+        sleep "$TO_PAGE"
+        invalidate_dump
+        dump_ui
+        if text_exists "通讯录" && text_exists "发现"; then
+            shot "s01_still_on_chatlist"
+            scene_fail "did not enter WeChat Pay"; return 1
         fi
     fi
 
-    shot "s03_wxpay_verified"
-    scene_pass "S04"; return 0
+    shot "s01_wxpay_verified"
+    scene_pass "S02"; return 0
 }
 
-# ===== Scene: S04 - Switch to "支付服务" tab (webview) =====
-scene_s04() {
-    SCENE_ID="S04"
-    log "=== S04: pay service tab ==="
+# ===== Scene: S02 - Switch to "支付服务" tab (webview) =====
+scene_s02() {
+    SCENE_ID="S02"
+    log "=== S02: pay service tab ==="
 
     sleep 2
     tap_var "$C_PAY_SERVICE_TAB"
@@ -333,17 +304,17 @@ scene_s04() {
     FG=$(current_pkg)
     case "$FG" in
         *"$WECHAT_PKG"*)
-            scene_pass "S05"; return 0 ;;
+            scene_pass "S03"; return 0 ;;
         *)
             log "  not in wechat: $FG"
             scene_fail "pay service tab timeout"; return 1 ;;
     esac
 }
 
-# ===== Scene: S05 - "提现比比省" voucher claim (webview) =====
-scene_s05() {
-    SCENE_ID="S05"
-    log "=== S05: bibisheng voucher claim ==="
+# ===== Scene: S03 - "提现比比省" voucher claim (webview) =====
+scene_s03() {
+    SCENE_ID="S03"
+    log "=== S03: bibisheng voucher claim ==="
 
     tap_var "$C_TX_BIBISHENG"
     sleep "$TO_WEBVIEW"
@@ -363,16 +334,16 @@ scene_s05() {
     sleep "$TO_PAGE"
     shot "after_bibisheng"
 
-    scene_pass "S06"; return 0
+    scene_pass "S04"; return 0
 }
 
-# ===== Scene: S06 - Enter "支付有优惠" (webview) =====
-scene_s06() {
-    SCENE_ID="S06"
-    log "=== S06: enter 支付有优惠 ==="
+# ===== Scene: S04 - Enter "支付有优惠" (webview) =====
+scene_s04() {
+    SCENE_ID="S04"
+    log "=== S04: enter 支付有优惠 ==="
 
     if [ -z "$C_PAY_DISCOUNT" ]; then
-        shot "s06_no_coord"
+        shot "s04_no_coord"
         scene_fail "pay discount entry not found"; return 1
     fi
 
@@ -380,16 +351,16 @@ scene_s06() {
     sleep "$TO_WEBVIEW"
     shot "pay_discount_page"
 
-    scene_pass "S07"; return 0
+    scene_pass "S05"; return 0
 }
 
-# ===== Scene: S07 - "兑换好礼" -> "金币提现券" (webview) =====
-scene_s07() {
-    SCENE_ID="S07"
-    log "=== S07: 兑换好礼 -> 金币提现券 ==="
+# ===== Scene: S05 - "兑换好礼" -> "金币提现券" (webview) =====
+scene_s05() {
+    SCENE_ID="S05"
+    log "=== S05: 兑换好礼 -> 金币提现券 ==="
 
     if [ -z "$C_EXCHANGE_GIFT" ]; then
-        shot "s07_no_exchange_coord"
+        shot "s05_no_exchange_coord"
         scene_fail "coin voucher not found"; return 1
     fi
 
@@ -398,7 +369,7 @@ scene_s07() {
     shot "exchange_gift_page"
 
     if [ -z "$C_COIN_VOUCHER" ]; then
-        shot "s07_no_voucher_coord"
+        shot "s05_no_voucher_coord"
         scene_fail "coin voucher not found"; return 1
     fi
 
@@ -406,16 +377,16 @@ scene_s07() {
     sleep "$TO_WEBVIEW"
     shot "coin_voucher_page"
 
-    scene_pass "S08"; return 0
+    scene_pass "S06"; return 0
 }
 
-# ===== Scene: S08 - 100元额度兑换券 exchange (webview, financial) =====
-scene_s08() {
-    SCENE_ID="S08"
-    log "=== S08: 100 yuan voucher exchange (financial) ==="
+# ===== Scene: S06 - 100元额度兑换券 exchange (webview, financial) =====
+scene_s06() {
+    SCENE_ID="S06"
+    log "=== S06: 100 yuan voucher exchange (financial) ==="
 
     if [ -z "$C_VOUCHER_100" ] || [ -z "$C_EXCHANGE_CLAIM" ]; then
-        shot "s08_no_coords"
+        shot "s06_no_coords"
         scene_fail "coordinates not configured"; return 1
     fi
 
@@ -449,13 +420,13 @@ scene_s08() {
     shot "after_exchange"
 
     # Always pass forward - never fail (avoids duplicate exchange on retry)
-    scene_pass "S09"; return 0
+    scene_pass "S07"; return 0
 }
 
-# ===== Scene: S09 - "花金币" + "拼手气" accept (webview) =====
-scene_s09() {
-    SCENE_ID="S09"
-    log "=== S09: lottery - spend coin & accept ==="
+# ===== Scene: S07 - "花金币" + "拼手气" accept (webview) =====
+scene_s07() {
+    SCENE_ID="S07"
+    log "=== S07: lottery - spend coin & accept ==="
 
     tap_var "$C_SPEND_COIN"
     sleep "$TO_PAGE"
@@ -465,14 +436,14 @@ scene_s09() {
     sleep 2
     shot "lottery_started"
 
-    log "  lottery draw started, advancing to S10"
-    scene_pass "S10"; return 0
+    log "  lottery draw started, advancing to S08"
+    scene_pass "S08"; return 0
 }
 
-# ===== Scene: S10 - Lottery animation -> confirm popup -> END =====
-scene_s10() {
-    SCENE_ID="S10"
-    log "=== S10: lottery confirm - wait for result popup ==="
+# ===== Scene: S08 - Lottery animation -> confirm popup -> END =====
+scene_s08() {
+    SCENE_ID="S08"
+    log "=== S08: lottery confirm - wait for result popup ==="
 
     i=0
     found=0
@@ -528,27 +499,23 @@ scene_s99() {
     shot "reset_after_back"
 
     if dump_ui; then
-        if text_exists "微信支付"; then
-            log "  identified: WeChat Pay"
-            shot "reset_wxpay"
-            scene_pass "S04"; return 0
+        # Chat list: bottom tabs visible
+        if text_exists "通讯录" && text_exists "发现"; then
+            log "  identified: WeChat chat list"
+            shot "reset_chatlist"
+            reset_retries
+            scene_pass "S01"; return 0
         fi
         if text_exists "支付服务"; then
             log "  identified: pay service"
             shot "reset_pay_service"
-            scene_pass "S05"; return 0
+            scene_pass "S03"; return 0
         fi
         if text_exists "微信"; then
-            log "  identified: WeChat home"
+            log "  identified: WeChat home or wxpay page"
             shot "reset_home"
             reset_retries
             scene_pass "S00"; return 0
-        fi
-        if text_exists "搜索"; then
-            log "  identified: near home"
-            shot "reset_near_home"
-            reset_retries
-            scene_pass "S01"; return 0
         fi
         log "  page not recognized, logging visible text"
         print_screen
@@ -571,23 +538,21 @@ check_coords() {
     echo ""
     _cs() { [ "$1" -eq 1 ] && echo "OK " || echo "TODO"; }
     echo "S00 home:        (native, dump-based, no coords)"
-    echo "S01 search:      C_SEARCH_BAR=[$C_SEARCH_BAR]       [$( _cs $CAL_SEARCH_BAR )]"
-    echo "S02 result:      C_WXPAY_RESULT=[$C_WXPAY_RESULT]     [$( _cs $CAL_WXPAY_RESULT )]"
-    echo "S03 enter wxpay:  (native, dump-based, no coords)"
-    echo "S04 pay service: C_PAY_SERVICE_TAB=[$C_PAY_SERVICE_TAB] [$( _cs $CAL_PAY_SERVICE_TAB )]"
-    echo "S05 bibisheng:    C_TX_BIBISHENG=[$C_TX_BIBISHENG]     [$( _cs $CAL_TX_BIBISHENG )]"
+    echo "S01 wxpay entry: (native, click_text, no coords)"
+    echo "S02 pay service: C_PAY_SERVICE_TAB=[$C_PAY_SERVICE_TAB] [$( _cs $CAL_PAY_SERVICE_TAB )]"
+    echo "S03 bibisheng:    C_TX_BIBISHENG=[$C_TX_BIBISHENG]     [$( _cs $CAL_TX_BIBISHENG )]"
     echo "                 C_TX_VOUCHER_CLAIM=[$C_TX_VOUCHER_CLAIM] [$( _cs $CAL_TX_VOUCHER_CLAIM )]"
-    echo "S06 discount:    C_PAY_DISCOUNT=[$C_PAY_DISCOUNT]   [$( _cs $CAL_PAY_DISCOUNT )]"
-    echo "S07 exchange:    C_EXCHANGE_GIFT=[$C_EXCHANGE_GIFT]   [$( _cs $CAL_EXCHANGE_GIFT )]"
+    echo "S04 discount:    C_PAY_DISCOUNT=[$C_PAY_DISCOUNT]   [$( _cs $CAL_PAY_DISCOUNT )]"
+    echo "S05 exchange:    C_EXCHANGE_GIFT=[$C_EXCHANGE_GIFT]   [$( _cs $CAL_EXCHANGE_GIFT )]"
     echo "                 C_COIN_VOUCHER=[$C_COIN_VOUCHER]  [$( _cs $CAL_COIN_VOUCHER )]"
-    echo "S08 voucher100:  C_VOUCHER_100=[$C_VOUCHER_100]    [$( _cs $CAL_VOUCHER_100 )]"
+    echo "S06 voucher100:  C_VOUCHER_100=[$C_VOUCHER_100]    [$( _cs $CAL_VOUCHER_100 )]"
     echo "                 C_EXCHANGE_CLAIM=[$C_EXCHANGE_CLAIM] [$( _cs $CAL_EXCHANGE_CLAIM )]"
-    echo "S09 lottery:      C_SPEND_COIN=[$C_SPEND_COIN]     [$( _cs $CAL_SPEND_COIN )]"
+    echo "S07 lottery:      C_SPEND_COIN=[$C_SPEND_COIN]     [$( _cs $CAL_SPEND_COIN )]"
     echo "                 C_LOTTERY_ACCEPT=[$C_LOTTERY_ACCEPT] [$( _cs $CAL_LOTTERY_ACCEPT )]"
-    echo "S10 confirm:      C_LOTTERY_CONFIRM=[$C_LOTTERY_CONFIRM] [$( _cs $CAL_LOTTERY_CONFIRM )]"
+    echo "S08 confirm:      C_LOTTERY_CONFIRM=[$C_LOTTERY_CONFIRM] [$( _cs $CAL_LOTTERY_CONFIRM )]"
     echo ""
     local todo=0 total=0 v val
-    for v in CAL_SEARCH_BAR CAL_WXPAY_RESULT CAL_PAY_SERVICE_TAB CAL_TX_BIBISHENG \
+    for v in CAL_PAY_SERVICE_TAB CAL_TX_BIBISHENG \
              CAL_TX_VOUCHER_CLAIM CAL_PAY_DISCOUNT CAL_EXCHANGE_GIFT CAL_COIN_VOUCHER \
              CAL_VOUCHER_100 CAL_EXCHANGE_CLAIM CAL_SPEND_COIN CAL_LOTTERY_ACCEPT \
              CAL_LOTTERY_CONFIRM; do
@@ -605,20 +570,18 @@ preview_coords() {
     echo "  Coords used by $s:"
     case "$s" in
         S00) echo "    (none - dump-based)" ;;
-        S01) echo "    C_SEARCH_BAR=$C_SEARCH_BAR [CAL=$CAL_SEARCH_BAR]" ;;
-        S02) echo "    C_WXPAY_RESULT=$C_WXPAY_RESULT [CAL=$CAL_WXPAY_RESULT]" ;;
-        S03) echo "    (none - dump-based)" ;;
-        S04) echo "    C_PAY_SERVICE_TAB=$C_PAY_SERVICE_TAB [CAL=$CAL_PAY_SERVICE_TAB]" ;;
-        S05) echo "    C_TX_BIBISHENG=$C_TX_BIBISHENG [CAL=$CAL_TX_BIBISHENG]"
+        S01) echo "    (none - click_text based)" ;;
+        S02) echo "    C_PAY_SERVICE_TAB=$C_PAY_SERVICE_TAB [CAL=$CAL_PAY_SERVICE_TAB]" ;;
+        S03) echo "    C_TX_BIBISHENG=$C_TX_BIBISHENG [CAL=$CAL_TX_BIBISHENG]"
              echo "    C_TX_VOUCHER_CLAIM=$C_TX_VOUCHER_CLAIM [CAL=$CAL_TX_VOUCHER_CLAIM]" ;;
-        S06) echo "    C_PAY_DISCOUNT=$C_PAY_DISCOUNT [CAL=$CAL_PAY_DISCOUNT]" ;;
-        S07) echo "    C_EXCHANGE_GIFT=$C_EXCHANGE_GIFT [CAL=$CAL_EXCHANGE_GIFT]"
+        S04) echo "    C_PAY_DISCOUNT=$C_PAY_DISCOUNT [CAL=$CAL_PAY_DISCOUNT]" ;;
+        S05) echo "    C_EXCHANGE_GIFT=$C_EXCHANGE_GIFT [CAL=$CAL_EXCHANGE_GIFT]"
              echo "    C_COIN_VOUCHER=$C_COIN_VOUCHER [CAL=$CAL_COIN_VOUCHER]" ;;
-        S08) echo "    C_VOUCHER_100=$C_VOUCHER_100 [CAL=$CAL_VOUCHER_100]"
+        S06) echo "    C_VOUCHER_100=$C_VOUCHER_100 [CAL=$CAL_VOUCHER_100]"
              echo "    C_EXCHANGE_CLAIM=$C_EXCHANGE_CLAIM [CAL=$CAL_EXCHANGE_CLAIM]" ;;
-        S09) echo "    C_SPEND_COIN=$C_SPEND_COIN [CAL=$CAL_SPEND_COIN]"
+        S07) echo "    C_SPEND_COIN=$C_SPEND_COIN [CAL=$CAL_SPEND_COIN]"
              echo "    C_LOTTERY_ACCEPT=$C_LOTTERY_ACCEPT [CAL=$CAL_LOTTERY_ACCEPT]" ;;
-        S10) echo "    C_LOTTERY_CONFIRM=$C_LOTTERY_CONFIRM [CAL=$CAL_LOTTERY_CONFIRM]" ;;
+        S08) echo "    C_LOTTERY_CONFIRM=$C_LOTTERY_CONFIRM [CAL=$CAL_LOTTERY_CONFIRM]" ;;
         S99) echo "    (none - uses dump for identification)" ;;
     esac
     echo ""
@@ -640,7 +603,7 @@ main() {
             log "  state reset to S00"
             ;;
         --scene)
-            # Run a single scene for testing: sh wx_sign.sh --scene S05
+            # Run a single scene for testing: sh wx_sign.sh --scene S03
             local target="${2:-S00}"
             echo ""
             preview_coords "$target"
@@ -655,8 +618,6 @@ main() {
                 S06) scene_s06 ;;
                 S07) scene_s07 ;;
                 S08) scene_s08 ;;
-                S09) scene_s09 ;;
-                S10) scene_s10 ;;
                 S99) scene_s99 ;;
                 *) log "  unknown scene: $target"; exit 1 ;;
             esac
@@ -680,8 +641,6 @@ main() {
             S06) scene_s06 ;;
             S07) scene_s07 ;;
             S08) scene_s08 ;;
-            S09) scene_s09 ;;
-            S10) scene_s10 ;;
             S99) scene_s99 ;;
             END)
                 log "====== already completed ======"
