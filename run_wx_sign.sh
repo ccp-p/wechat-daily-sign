@@ -33,7 +33,7 @@ else
 fi
 
 # Check if wx_sign.sh exists
-if [ ! -f /sdcard/wx_sign.sh ]; then
+if ! echo 'test -f /sdcard/wx_sign.sh' | timeout -s KILL 5 sh ~/rish 2>/dev/null; then
     echo "[$TS] ERROR: /sdcard/wx_sign.sh not found!" >> "$LOG"
     echo "[$TS] ===== WX_SIGN CRON ABORTED =====" >> "$LOG"
     exit 1

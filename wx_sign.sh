@@ -99,6 +99,12 @@ swipe_down() {
 back() { input keyevent 4; invalidate_dump; log "  back"; }
 home() { input keyevent 3; invalidate_dump; log "  home"; }
 
+wake_screen() {
+    input keyevent 224 2>/dev/null
+    sleep 1
+    log "  screen woken"
+}
+
 shot() {
     [ "$DEBUG" -eq 0 ] && return 0
     screencap -p "$SHOT_DIR/$1_$(date +%s).png" 2>/dev/null
@@ -656,6 +662,8 @@ preview_coords() {
 
 main() {
     log "====== wx_sign started ======"
+
+    wake_screen
 
     # Parse args
     local arg="${1:-}"
