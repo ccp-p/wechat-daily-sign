@@ -1,24 +1,31 @@
 #!/system/bin/sh
-# MacroDroid entry point - runs wx_sign directly via Shizuku, no Termux needed
+# MacroDroid entry point - runs wx_sign via Shizuku with binder recovery
 RISH=/data/local/tmp/rish
 LOG=/sdcard/wx-sign/cron.log
 TS=$(date "+%Y-%m-%d %H:%M:%S")
 
 echo "[$TS] ===== WX_SIGN TRIGGERED =====" >> "$LOG"
 
-# Probe Shizuku with retries (app_process cold start can be slow)
+# Wake screen first - Doze freezes binder, screen on helps unfreeze
+input keyevent 224 2>/dev/null
+sleep 1
+
+# Probe Shizuku with retries
 SHIZUKU_READY=0
-for i in 1 2 3; do
+for i in 1 2 3 4 5; do
     if echo 'echo SHIZUKU_OK' | timeout -s KILL 15 sh "$RISH" 2>/dev/null | grep -q SHIZUKU_OK; then
         SHIZUKU_READY=1
         break
     fi
     echo "[$TS] rish attempt $i failed, retrying..." >> "$LOG"
-    sleep 2
+    # Doze can freeze binder; wake screen + launch Shizuku app to unfreeze
+    input keyevent 224 2>/dev/null
+    monkey -p moe.shizuku.privileged.api -c android.intent.category.LAUNCHER 1 2>/dev/null
+    sleep 5
 done
 
 if [ "$SHIZUKU_READY" -eq 0 ]; then
-    echo "[$TS] ERROR: Shizuku not running. Open Shizuku app and start service, then retry." >> "$LOG"
+    echo "[$TS] ERROR: Shizuku not running after 5 retries." >> "$LOG"
     echo "[$TS] ===== WX_SIGN ABORTED =====" >> "$LOG"
     exit 1
 fi
