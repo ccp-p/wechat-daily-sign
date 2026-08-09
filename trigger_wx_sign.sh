@@ -20,7 +20,7 @@ for i in 1 2 3 4 5; do
     echo "[$TS] rish attempt $i failed, retrying..." >> "$LOG"
     # Doze can freeze binder; wake screen + launch Shizuku app to unfreeze
     input keyevent 224 2>/dev/null
-    monkey -p moe.shizuku.privileged.api -c android.intent.category.LAUNCHER 1 2>/dev/null
+    am start -n moe.shizuku.privileged.api/moe.shizuku.manager.MainActivity 2>/dev/null
     sleep 5
 done
 
