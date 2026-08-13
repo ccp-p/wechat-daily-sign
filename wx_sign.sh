@@ -106,15 +106,12 @@ wake_screen() {
 }
 
 shot() {
-    [ "$DEBUG" -eq 0 ] && return 0
-    screencap -p "$SHOT_DIR/$1_$(date +%s).png" 2>/dev/null
-    log "  shot: $1"
+    return 0
 }
 
 # Always-fire screenshot (for failures)
 shot_fail() {
-    screencap -p "$SHOT_DIR/$1_fail_$(date +%s).png" 2>/dev/null
-    log "  shot_fail: $1"
+    return 0
 }
 
 # ===== UI dump (native pages; webview returns empty) =====
