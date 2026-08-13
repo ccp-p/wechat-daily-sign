@@ -61,13 +61,15 @@ C_EXCHANGE_CLAIM="582 2052"
 CAL_EXCHANGE_CLAIM=0
 
 # S07: spend coins lottery (webview)
-C_SPEND_COIN="810 1000"
+C_SPEND_COIN="799 994"
 CAL_SPEND_COIN=0
-C_LOTTERY_ACCEPT="540 1800"
+C_LOTTERY_ACCEPT="540 1435"
 CAL_LOTTERY_ACCEPT=0
 
 # S08: lottery confirm popup (webview)
-C_LOTTERY_CONFIRM="540 2000"
+C_LOTTERY_CONFIRM_DLG="750 1285"
+CAL_LOTTERY_CONFIRM_DLG=0
+C_LOTTERY_CONFIRM="540 1800"
 CAL_LOTTERY_CONFIRM=0
 
 # Timeouts (seconds)
@@ -265,6 +267,10 @@ scan_lottery_result() {
     fi
     if text_exists "确认收下" || text_exists "收下"; then
         log "  lottery result: WON_PRIZE (confirm popup)"
+        return 0
+    fi
+    if text_exists "立即收下"; then
+        log "  lottery result: WON_PRIZE (claim button)"
         return 0
     fi
     if text_exists "谢谢参与"; then
@@ -549,54 +555,51 @@ scene_s06() {
 # ===== Scene: S07 - "花金币" + "拼手气" accept (webview) =====
 scene_s07() {
     SCENE_ID="S07"
-    log "=== S07: lottery - spend coin & accept ==="
+    log "=== S07: 抽提现券 -> 1金币抽提现券 -> 确认使用1金币 ==="
 
     # Pre-flight: refuse with missing coordinates
     if [ -z "$C_SPEND_COIN" ] || [ -z "$C_LOTTERY_ACCEPT" ]; then
-        shot "s07_no_coords"
         scene_fail "coordinates not configured (C_SPEND_COIN/C_LOTTERY_ACCEPT)"; return 1
     fi
 
-    # Cooldown check: if lottery already drawn today, skip to END
-    if wait_for_any "已收下" "天后可再参与" "$TO_WEBVIEW"; then
-        log "  lottery in cooldown, already drawn today, skipping"
-        scene_pass "END"; return 0
-    fi
-    # Extended cooldown patterns (best-effort, single dump)
+    # Cooldown check: already claimed -> 7-day cooldown
     invalidate_dump
     if dump_ui; then
-        if text_exists "明天再来" || text_exists "今日已抽" || text_exists "已参与"; then
-            log "  lottery cooldown detected (extended patterns), skipping"
+        if text_exists "7天后可再参与" || text_exists "已领取" || text_exists "已收下"; then
+            log "  lottery in cooldown (already claimed), skipping"
             scene_pass "END"; return 0
         fi
     fi
 
-    # Action a: enter "花金币" lottery section
-    if click_text "花金币"; then
-        log "  clicked '花金币' via text"
+    # Step 1: find and click "抽提现券" on the platform page
+    if click_text_wait "抽提现券" "$TO_WEBVIEW"; then
+        log "  clicked '抽提现券' via text"
     else
-        log "  '花金币' not found, using coordinate fallback"
+        log "  '抽提现券' not found, using coordinate fallback"
         tap_var "$C_SPEND_COIN"
     fi
-    sleep "$TO_PAGE"
-    shot "spend_coin_page"
+    sleep "$TO_WEBVIEW"
 
-    # Pre-check: insufficient coins -> can't draw, skip to END
+    # Step 2: find and click "1金币抽提现券" on the lottery page
     invalidate_dump
-    if dump_ui && { text_exists "金币不足" || text_exists "金币不够"; }; then
-        log "  insufficient coins for lottery, skipping"
-        scene_pass "END"; return 0
-    fi
-
-    # Action b: tap "拼手气" to start the lottery draw
-    if click_text "拼手气" 2>/dev/null; then
-        log "  clicked '拼手气' via text"
+    if click_text_wait "1金币抽提现券" "$TO_WEBVIEW"; then
+        log "  clicked '1金币抽提现券' via text"
     else
-        log "  '拼手气' not found, using coordinate fallback"
+        log "  '1金币抽提现券' not found, using coordinate fallback"
         tap_var "$C_LOTTERY_ACCEPT"
     fi
     sleep 2
-    shot "lottery_started"
+
+    # Step 3: handle confirmation dialog "确认使用1金币抽提现券吗?"
+    # FINANCIAL COMMITMENT POINT: after confirming, the coin is spent.
+    invalidate_dump
+    if click_text_wait "使用1金币" "$TO_PAGE"; then
+        log "  clicked '使用1金币' on confirm dialog"
+    else
+        log "  '使用1金币' not found, using coordinate fallback"
+        tap_var "$C_LOTTERY_CONFIRM_DLG"
+    fi
+    sleep 2
 
     log "  lottery draw started, advancing to S08"
     scene_pass "S08"; return 0
@@ -633,10 +636,10 @@ scene_s08() {
         fi
     fi
 
-    # Dismiss result: try prize-accept buttons, then dismiss buttons, then coord
+    # Dismiss result: try claim buttons, then dismiss buttons, then coord
     invalidate_dump
-    if click_text "确认收下" 2>/dev/null || click_text "收下" 2>/dev/null; then
-        log "  clicked confirm-receive via text"
+    if click_text "立即收下" 2>/dev/null || click_text "确认收下" 2>/dev/null || click_text "收下" 2>/dev/null; then
+        log "  clicked claim-receive via text"
     elif click_text "完成" 2>/dev/null || click_text "知道了" 2>/dev/null || click_text "确定" 2>/dev/null; then
         log "  clicked dismiss via text (no-prize or done)"
     else
@@ -644,7 +647,6 @@ scene_s08() {
         tap_var "$C_LOTTERY_CONFIRM"
     fi
     sleep 2
-    shot "final_result"
 
     # Best-effort: dismiss any secondary popup/toast
     sleep 1
@@ -727,13 +729,14 @@ check_coords() {
     echo "                 C_EXCHANGE_CLAIM=[$C_EXCHANGE_CLAIM] [$( _cs $CAL_EXCHANGE_CLAIM )]"
     echo "S07 lottery:      C_SPEND_COIN=[$C_SPEND_COIN]     [$( _cs $CAL_SPEND_COIN )]"
     echo "                 C_LOTTERY_ACCEPT=[$C_LOTTERY_ACCEPT] [$( _cs $CAL_LOTTERY_ACCEPT )]"
+    echo "S07 confirm dlg:  C_LOTTERY_CONFIRM_DLG=[$C_LOTTERY_CONFIRM_DLG] [$( _cs $CAL_LOTTERY_CONFIRM_DLG )]"
     echo "S08 confirm:      C_LOTTERY_CONFIRM=[$C_LOTTERY_CONFIRM] [$( _cs $CAL_LOTTERY_CONFIRM )]"
     echo ""
     local todo=0 total=0 v val
     for v in CAL_PAY_SERVICE_TAB CAL_TX_BIBISHENG \
              CAL_TX_VOUCHER_CLAIM CAL_PAY_DISCOUNT CAL_EXCHANGE_GIFT CAL_COIN_VOUCHER \
              CAL_VOUCHER_100 CAL_EXCHANGE_CLAIM CAL_SPEND_COIN CAL_LOTTERY_ACCEPT \
-             CAL_LOTTERY_CONFIRM; do
+             CAL_LOTTERY_CONFIRM_DLG CAL_LOTTERY_CONFIRM; do
         eval "val=\${$v}"
         total=$((total + 1))
         [ "$val" -ne 1 ] && todo=$((todo + 1))
@@ -758,7 +761,8 @@ preview_coords() {
         S06) echo "    C_VOUCHER_100=$C_VOUCHER_100 [CAL=$CAL_VOUCHER_100]"
              echo "    C_EXCHANGE_CLAIM=$C_EXCHANGE_CLAIM [CAL=$CAL_EXCHANGE_CLAIM]" ;;
         S07) echo "    C_SPEND_COIN=$C_SPEND_COIN [CAL=$CAL_SPEND_COIN]"
-             echo "    C_LOTTERY_ACCEPT=$C_LOTTERY_ACCEPT [CAL=$CAL_LOTTERY_ACCEPT]" ;;
+            echo "    C_LOTTERY_ACCEPT=$C_LOTTERY_ACCEPT [CAL=$CAL_LOTTERY_ACCEPT]"
+            echo "    C_LOTTERY_CONFIRM_DLG=$C_LOTTERY_CONFIRM_DLG [CAL=$CAL_LOTTERY_CONFIRM_DLG]" ;;
         S08) echo "    C_LOTTERY_CONFIRM=$C_LOTTERY_CONFIRM [CAL=$CAL_LOTTERY_CONFIRM]" ;;
         S99) echo "    (none - uses dump for identification)" ;;
     esac
