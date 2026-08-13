@@ -107,3 +107,14 @@ wx_sign.sh passes `sh -n` (POSIX shell).
 - 2026-08-06: added --scene flag for single-scene testing, --reset for state reset
 - 2026-08-06: added --check calibration checklist with CAL_xxx status tracking
 - 2026-08-06: --scene mode now previews coords used before execution
+- 2026-08-13: enhanced lottery/exchange scenes (S05-S08) with edge case handling
+  - S05: pre-flight coord guard, text-based coin voucher click fallback
+  - S06: pre-flight coord guard, pre-exchange screenshot, pre-check for
+    already-exchanged/insufficient-coins, scan_exchange_result helper
+    (covers 兑换成功/已兑换/金币不足/兑换失败/网络异常)
+  - S07: pre-flight coord guard, extended cooldown patterns (明天再来/今日已抽),
+    insufficient-coins pre-check before draw, fixed button order (拼手气 first)
+  - S08: fixed dump cache bug (invalidate_dump per loop iteration),
+    scan_lottery_result helper (谢谢参与/再抽一次/金币不足/恭喜/完成),
+    dismiss-button fallback chain, secondary popup dismiss, always pass to END
+  - Added scan_exchange_result() and scan_lottery_result() helper functions

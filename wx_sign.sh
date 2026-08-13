@@ -237,6 +237,62 @@ scene_fail() {
 read_state() { cat "$STATE_FILE" 2>/dev/null || echo "S00"; }
 write_state() { echo "$1" > "$STATE_FILE"; }
 
+# ===== Result scanning helpers =====
+# Scan exchange outcome from current dump; logs result category.
+# Returns 0 if dump was readable, 1 if webview dump empty.
+scan_exchange_result() {
+    if ! dump_ui; then
+        log "  webview dump empty; result in screenshot only"
+        return 1
+    fi
+    if text_exists "兑换成功"; then
+        log "  exchange result: SUCCESS"
+    elif text_exists "已兑换" || text_exists "今日已兑"; then
+        log "  exchange result: ALREADY_EXCHANGED (safe)"
+    elif text_exists "金币不足" || text_exists "金币不够"; then
+        log "  exchange result: INSUFFICIENT_COINS"
+    elif text_exists "兑换失败"; then
+        log "  exchange result: FAILED"
+    elif text_exists "网络异常" || text_exists "网络错误" || text_exists "加载失败"; then
+        log "  exchange result: NETWORK_ERROR"
+    else
+        log "  exchange result: SUBMITTED (no error detected)"
+    fi
+    return 0
+}
+
+# Scan lottery outcome from current dump; logs result, returns 0 if known.
+scan_lottery_result() {
+    if ! dump_ui; then
+        return 1
+    fi
+    if text_exists "确认收下" || text_exists "收下"; then
+        log "  lottery result: WON_PRIZE (confirm popup)"
+        return 0
+    fi
+    if text_exists "谢谢参与"; then
+        log "  lottery result: NO_PRIZE (thanks for participating)"
+        return 0
+    fi
+    if text_exists "再抽一次"; then
+        log "  lottery result: DRAW_AGAIN offered (ignoring, daily limit)"
+        return 0
+    fi
+    if text_exists "金币不足" || text_exists "金币不够"; then
+        log "  lottery result: INSUFFICIENT_COINS"
+        return 0
+    fi
+    if text_exists "恭喜" || text_exists "获得"; then
+        log "  lottery result: WON (prize text)"
+        return 0
+    fi
+    if text_exists "完成" || text_exists "知道了" || text_exists "确定"; then
+        log "  lottery result: DISMISS button found"
+        return 0
+    fi
+    return 1
+}
+
 # ===== Scene: S00 - Launch WeChat, verify home =====
 scene_s00() {
     SCENE_ID="S00"
@@ -393,6 +449,13 @@ scene_s05() {
     SCENE_ID="S05"
     log "=== S05: 兑换好礼 -> 金币提现券 ==="
 
+    # Pre-flight: refuse to navigate with missing coordinates
+    if [ -z "$C_EXCHANGE_GIFT" ] || [ -z "$C_COIN_VOUCHER" ]; then
+        shot "s05_no_coords"
+        scene_fail "coordinates not configured (C_EXCHANGE_GIFT/C_COIN_VOUCHER)"; return 1
+    fi
+
+    # Action a: enter "兑换好礼" section
     if click_text_wait "兑换好礼" "$TO_WEBVIEW"; then
         log "  clicked '兑换好礼' via text"
     else
@@ -402,8 +465,13 @@ scene_s05() {
     sleep "$TO_WEBVIEW"
     shot "exchange_gift_page"
 
-    # 金币换提现券 is an image (no text), tap by coordinate
-    tap_var "$C_COIN_VOUCHER"
+    # Action b: enter coin voucher page (image-based; try text first, then coordinate)
+    if click_text "金币提现券" 2>/dev/null || click_text "提现券" 2>/dev/null; then
+        log "  clicked coin voucher via text"
+    else
+        log "  coin voucher text not found, using coordinate"
+        tap_var "$C_COIN_VOUCHER"
+    fi
     sleep "$TO_WEBVIEW"
     shot "coin_voucher_page"
 
@@ -415,8 +483,15 @@ scene_s06() {
     SCENE_ID="S06"
     log "=== S06: 100 yuan voucher exchange (financial) ==="
 
+    # Pre-flight: refuse financial action with missing coordinates
+    if [ -z "$C_VOUCHER_100" ] || [ -z "$C_EXCHANGE_CLAIM" ]; then
+        shot "s06_no_coords"
+        scene_fail "coordinates not configured (C_VOUCHER_100/C_EXCHANGE_CLAIM)"; return 1
+    fi
+
     shot "voucher_list"
 
+    # Action a: enter 100元额度 voucher detail page
     if click_text_wait "100元额度" "$TO_WEBVIEW"; then
         log "  clicked '100元额度' voucher via text"
     else
@@ -424,17 +499,25 @@ scene_s06() {
         tap_var "$C_VOUCHER_100"
     fi
     sleep "$TO_WEBVIEW"
+    shot "voucher_detail"
 
-    # Check if already exchanged today - if so, skip entirely
+    # Pre-check: already exchanged or insufficient coins -> skip safely
     invalidate_dump
-    if text_exists "已兑换"; then
-        log "  already exchanged today, returning"
-        back
-        sleep "$TO_PAGE"
-        scene_pass "S07"; return 0
+    if dump_ui; then
+        if text_exists "已兑换" || text_exists "今日已兑"; then
+            log "  already exchanged today, skipping"
+            back; sleep "$TO_PAGE"
+            scene_pass "S07"; return 0
+        fi
+        if text_exists "金币不足" || text_exists "金币不够"; then
+            log "  insufficient coins detected, skipping exchange"
+            back; sleep "$TO_PAGE"
+            scene_pass "S07"; return 0
+        fi
     fi
 
-    # Not exchanged yet, click the exchange button
+    # FINANCIAL COMMITMENT POINT: after this tap the exchange may have
+    # succeeded, so we must NOT retry or scene_fail (would double-spend).
     if click_text_wait "1金币兑换" "$TO_PAGE"; then
         log "  clicked '1金币兑换' via text"
     else
@@ -442,8 +525,9 @@ scene_s06() {
         tap_var "$C_EXCHANGE_CLAIM"
     fi
     sleep "$TO_PAGE"
+    shot "exchange_tapped"
 
-    # Handle second confirmation dialog
+    # Handle second confirmation dialog (native overlay, dump should work)
     invalidate_dump
     if click_text_wait "确认兑换" "$TO_PAGE"; then
         log "  clicked '确认兑换' on confirm dialog"
@@ -452,23 +536,14 @@ scene_s06() {
     fi
     sleep "$TO_PAGE"
 
-    if dump_ui; then
-        if text_exists "兑换成功"; then
-            log "  exchange success"
-        elif text_exists "已兑换"; then
-            log "  edge case: already exchanged today"
-        elif text_exists "金币不足"; then
-            log "  edge case: insufficient coins"
-        else
-            log "  exchange submitted"
-        fi
-    fi
+    # Scan result (best-effort; webview may not expose text)
+    invalidate_dump
+    scan_exchange_result
+    shot "exchange_result"
 
-    # Back from 兑换成功 -> 兑换详情 -> 平台提现福利
-    back
-    sleep "$TO_PAGE"
-    back
-    sleep "$TO_PAGE"
+    # Back out: 兑换结果 -> 兑换详情 -> 平台提现福利 (two levels)
+    back; sleep "$TO_PAGE"
+    back; sleep "$TO_PAGE"
 
     # Always pass forward - never fail (avoids duplicate exchange on retry)
     scene_pass "S07"; return 0
@@ -479,11 +554,27 @@ scene_s07() {
     SCENE_ID="S07"
     log "=== S07: lottery - spend coin & accept ==="
 
-    if wait_for_any "已收下" "天后可再参与" "$TO_WEBVIEW"; then
-        log "  lottery in cooldown, already claimed, skipping"
-        scene_pass "END"; return 0
+    # Pre-flight: refuse with missing coordinates
+    if [ -z "$C_SPEND_COIN" ] || [ -z "$C_LOTTERY_ACCEPT" ]; then
+        shot "s07_no_coords"
+        scene_fail "coordinates not configured (C_SPEND_COIN/C_LOTTERY_ACCEPT)"; return 1
     fi
 
+    # Cooldown check: if lottery already drawn today, skip to END
+    if wait_for_any "已收下" "天后可再参与" "$TO_WEBVIEW"; then
+        log "  lottery in cooldown, already drawn today, skipping"
+        scene_pass "END"; return 0
+    fi
+    # Extended cooldown patterns (best-effort, single dump)
+    invalidate_dump
+    if dump_ui; then
+        if text_exists "明天再来" || text_exists "今日已抽" || text_exists "已参与"; then
+            log "  lottery cooldown detected (extended patterns), skipping"
+            scene_pass "END"; return 0
+        fi
+    fi
+
+    # Action a: enter "花金币" lottery section
     if click_text "花金币"; then
         log "  clicked '花金币' via text"
     else
@@ -493,11 +584,18 @@ scene_s07() {
     sleep "$TO_PAGE"
     shot "spend_coin_page"
 
+    # Pre-check: insufficient coins -> can't draw, skip to END
     invalidate_dump
-    if click_text "收下" 2>/dev/null || click_text "拼手气" 2>/dev/null; then
-        log "  clicked accept via text"
+    if dump_ui && { text_exists "金币不足" || text_exists "金币不够"; }; then
+        log "  insufficient coins for lottery, skipping"
+        scene_pass "END"; return 0
+    fi
+
+    # Action b: tap "拼手气" to start the lottery draw
+    if click_text "拼手气" 2>/dev/null; then
+        log "  clicked '拼手气' via text"
     else
-        log "  accept button not found via text, using coordinate"
+        log "  '拼手气' not found, using coordinate fallback"
         tap_var "$C_LOTTERY_ACCEPT"
     fi
     sleep 2
@@ -512,15 +610,17 @@ scene_s08() {
     SCENE_ID="S08"
     log "=== S08: lottery confirm - wait for result popup ==="
 
+    # Poll for result popup up to TO_ANIMATION seconds.
+    # invalidate_dump each iteration to get fresh dumps (fixes stale cache).
     i=0
     found=0
     dump_ok=0
     while [ "$i" -lt "$TO_ANIMATION" ]; do
+        invalidate_dump
         if dump_ui; then
             dump_ok=1
-            if text_exists "确认收下" || text_exists "收下"; then
+            if scan_lottery_result; then
                 found=1
-                log "  result popup detected"
                 break
             fi
         fi
@@ -530,28 +630,36 @@ scene_s08() {
 
     if [ "$found" -eq 0 ]; then
         if [ "$dump_ok" -eq 1 ]; then
-            log "  screen readable but no popup; blind-tapping confirm"
+            log "  screen readable but no result detected; blind-tapping"
         else
-            log "  webview dump empty; blind-tapping confirm"
+            log "  webview dump empty; blind-tapping"
         fi
     fi
 
+    # Dismiss result: try prize-accept buttons, then dismiss buttons, then coord
     invalidate_dump
     if click_text "确认收下" 2>/dev/null || click_text "收下" 2>/dev/null; then
-        log "  clicked confirm via text"
+        log "  clicked confirm-receive via text"
+    elif click_text "完成" 2>/dev/null || click_text "知道了" 2>/dev/null || click_text "确定" 2>/dev/null; then
+        log "  clicked dismiss via text (no-prize or done)"
     else
-        log "  confirm not found via text, using coordinate"
+        log "  result button not found via text, using coordinate"
         tap_var "$C_LOTTERY_CONFIRM"
     fi
     sleep 2
     shot "final_result"
 
-    if [ "$found" -eq 1 ] || [ "$dump_ok" -eq 0 ]; then
-        log "  confirm handled, daily flow complete"
-        scene_pass "END"; return 0
-    else
-        scene_fail "confirm popup not found"; return 1
+    # Best-effort: dismiss any secondary popup/toast
+    sleep 1
+    invalidate_dump
+    if dump_ui; then
+        click_text "完成" 2>/dev/null || click_text "知道了" 2>/dev/null || click_text "确定" 2>/dev/null
     fi
+
+    # Last scene: always pass to END. Failing here gains nothing -
+    # S99 recovery would restart and re-trigger the lottery (double-draw risk).
+    log "  lottery flow complete, daily sign-in done"
+    scene_pass "END"; return 0
 }
 
 # ===== Scene: S99 - Fallback reset and recovery =====
